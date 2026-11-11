@@ -1,573 +1,525 @@
-import os
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from email.parser import BytesParser
+from email.policy import default
+from pathlib import Path
+from datetime import datetime
 import json
-import html
 import mimetypes
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import unquote, quote
+import os
+import re
 
 HOST = "127.0.0.1"
 PORT = 8080
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
-MAX_SIZE = 15 * 1024 * 1024
+MAX_SIZE = 20 * 1024 * 1024
 
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
 
 HTML = r"""
 <!DOCTYPE html>
 <html lang="id">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>RIJALGANZZ SYSTEM</title>
-
 <style>
-* {
-    box-sizing: border-box;
-}
-
-body {
-    margin: 0;
-    background: #050807;
-    color: #00ff88;
-    font-family: monospace;
-}
-
-header {
-    padding: 22px;
-    background: #08130e;
-    border-bottom: 1px solid #00ff88;
-}
-
-header h1 {
-    margin: 0;
-    font-size: 22px;
-}
-
-header p {
-    color: #75b99a;
-    font-size: 12px;
-}
-
-.container {
-    max-width: 900px;
-    padding: 15px;
-    margin: auto;
-}
-
-.card {
-    background: #09120e;
-    border: 1px solid #145b38;
-    padding: 17px;
-    border-radius: 9px;
-    margin-bottom: 15px;
-}
-
-h2 {
-    font-size: 16px;
-    margin-top: 0;
-}
-
-button, .download {
-    background: #00ff88;
-    border: none;
-    color: #001b0d;
-    padding: 10px 14px;
-    font-weight: bold;
-    border-radius: 5px;
-    cursor: pointer;
-    margin: 4px 0;
-    text-decoration: none;
-    display: inline-block;
-}
-
-button:hover, .download:hover {
-    background: #00c96b;
-}
-
-input[type=file] {
-    width: 100%;
-    margin: 12px 0;
-    color: #fff;
-}
-
-#terminal {
-    height: 180px;
-    overflow-y: auto;
-    background: #020503;
-    padding: 12px;
-    border: 1px solid #145b38;
-    font-size: 12px;
-    white-space: pre-wrap;
-}
-
-.file {
-    padding: 12px;
-    border-bottom: 1px solid #17452d;
-    overflow-wrap: anywhere;
-}
-
-.file small {
-    display: block;
-    color: #91b6a0;
-    margin: 5px 0;
-}
-
-.status {
-    color: #8affb9;
-    font-size: 12px;
-}
-
-.danger {
-    background: #ff5555;
-    color: white;
-}
-
-footer {
-    text-align: center;
-    padding: 20px;
-    color: #527b62;
-    font-size: 11px;
-}
+*{box-sizing:border-box}
+body{margin:0;padding:18px;background:#050a08;color:#00ff88;font-family:monospace}
+.container{max-width:650px;margin:auto}
+h1{text-align:center;text-shadow:0 0 12px #00ff88}
+.box{border:1px solid #087c48;padding:15px;margin:14px 0;border-radius:8px;background:#08130e}
+button{background:#062d1b;color:#00ff88;border:1px solid #00ff88;padding:12px;margin:5px 0;width:100%;border-radius:5px;font-weight:bold}
+button:active{background:#00ff88;color:black}
+video,img,audio{width:100%;margin-top:10px;border-radius:8px}
+video{background:#000}
+#status{color:white;white-space:pre-wrap;overflow-wrap:anywhere}
+.item{border:1px solid #176b43;padding:10px;margin:10px 0;border-radius:6px}
+.item img{max-height:250px;object-fit:contain}
+.item audio{width:100%}
+small{color:#8ba99a}
+input{max-width:100%;margin:10px 0}
 </style>
 </head>
-
 <body>
-
-<header>
-    <h1>RIJALGANZZ SYSTEM</h1>
-    <p>LOCALHOST CONTROL PANEL // TERMUX EDITION</p>
-</header>
-
 <div class="container">
+<h1>RIJALGANZZ SYSTEM</h1>
+<p style="text-align:center">LOCAL DEVICE DASHBOARD</p>
 
-    <div class="card">
-        <h2> SYSTEM INFORMATION</h2>
-        <div id="systemInfo" class="status">
-            Loading system information...
-        </div>
-    </div>
-
-    <div class="card">
-        <h2> FILE UPLOAD</h2>
-        <p class="status">
-            Pilih file yang ingin disimpan ke Termux.
-            Maksimal 15 MB per file.
-        </p>
-
-        <input type="file" id="fileInput" multiple>
-
-        <button onclick="uploadFiles()">UPLOAD FILE</button>
-    </div>
-
-    <div class="card">
-        <h2> FILE MANAGER</h2>
-
-        <button onclick="loadFiles()">REFRESH FILES</button>
-
-        <div id="fileList" class="status">
-            Loading files...
-        </div>
-    </div>
-
-    <div class="card">
-        <h2> TERMINAL</h2>
-
-        <div id="terminal"></div>
-
-        <button onclick="clearTerminal()">CLEAR TERMINAL</button>
-    </div>
-
+<div class="box">
+<h3>CAMERA</h3>
+<video id="video" autoplay playsinline></video>
+<button onclick="startCamera()">AKTIFKAN KAMERA</button>
+<button onclick="takePhoto()">AMBIL FOTO</button>
+<button onclick="stopCamera()">MATIKAN KAMERA</button>
 </div>
 
-<footer>
-    RIJALGANZZ SYSTEM // LOCALHOST VERSION
-</footer>
+<div class="box">
+<h3>VOICE RECORDING</h3>
+<p><small>Rekam suara maksimal 10 detik.</small></p>
+<button onclick="recordMic()">MULAI REKAM VN</button>
+<audio id="preview" controls></audio>
+</div>
+
+<div class="box">
+<h3>LOCATION</h3>
+<button onclick="getLocation()">AMBIL LOKASI</button>
+</div>
+
+<div class="box">
+<h3>CONTACTS</h3>
+<button onclick="getContacts()">PILIH KONTAK</button>
+<small>Kontak dipilih secara manual. Browser harus mendukung Contact Picker.</small>
+</div>
+
+<div class="box">
+<h3>FILE UPLOAD</h3>
+<input type="file" id="files" multiple>
+<button onclick="sendFiles()">KIRIM FILE TERPILIH</button>
+</div>
+
+<div class="box">
+<h3>MEDIA GALLERY</h3>
+<button onclick="loadMedia()">REFRESH GALERI</button>
+<div id="gallery"></div>
+</div>
+
+<div class="box">
+<h3>STATUS</h3>
+<div id="status">System ready...</div>
+</div>
+</div>
 
 <script>
-const terminal = document.getElementById("terminal");
+const statusBox = document.getElementById("status");
+const video = document.getElementById("video");
+const preview = document.getElementById("preview");
+const gallery = document.getElementById("gallery");
 
-function log(message) {
-    const time = new Date().toLocaleTimeString("id-ID");
+let cameraStream = null;
+let recording = false;
 
-    terminal.innerHTML +=
-        "[" + time + "] " + message + "\n";
-
-    terminal.scrollTop = terminal.scrollHeight;
+function status(message){
+    statusBox.textContent += "\\n> " + message;
 }
 
-function clearTerminal() {
-    terminal.innerHTML = "";
-}
-
-function getSystemInfo() {
-    const info = {
-        Browser: navigator.userAgent,
-        Platform: navigator.platform,
-        Language: navigator.language,
-        Online: navigator.onLine,
-        Screen: screen.width + " x " + screen.height,
-        CPU: navigator.hardwareConcurrency || "Unknown",
-        Timezone: Intl.DateTimeFormat()
-            .resolvedOptions().timeZone
-    };
-
-    document.getElementById("systemInfo").innerHTML =
-        Object.entries(info)
-        .map(([key, value]) =>
-            "<p><b>" + key + ":</b> " +
-            String(value).replace(/</g, "&lt;") +
-            "</p>"
-        ).join("");
-
-    log("System information loaded.");
-}
-
-async function uploadFiles() {
-    const input = document.getElementById("fileInput");
-    const files = input.files;
-
-    if (!files.length) {
-        log("Pilih file terlebih dahulu.");
-        return;
-    }
-
-    for (const file of files) {
-        if (file.size > 15 * 1024 * 1024) {
-            log("File terlalu besar: " + file.name);
-            continue;
-        }
-
-        const formData = new FormData();
-        formData.append("file", file);
-
-        try {
-            log("Uploading: " + file.name);
-
-            const response = await fetch("/upload", {
-                method: "POST",
-                body: formData
-            });
-
-            const result = await response.json();
-
-            if (!response.ok) {
-                throw new Error(result.error || "Upload gagal");
-            }
-
-            log("Upload berhasil: " + result.filename);
-
-        } catch (error) {
-            log("Upload gagal: " + error.message);
-        }
-    }
-
-    input.value = "";
-    loadFiles();
-}
-
-async function loadFiles() {
-    const list = document.getElementById("fileList");
-
-    try {
-        const response = await fetch("/files");
-        const result = await response.json();
-
-        if (!response.ok) {
-            throw new Error("Gagal mengambil daftar file");
-        }
-
-        if (!result.files.length) {
-            list.innerHTML = "Belum ada file.";
-            return;
-        }
-
-        list.innerHTML = result.files.map(file => `
-            <div class="file">
-                <b>${escapeHTML(file.name)}</b>
-                <small>${formatSize(file.size)}</small>
-
-                <a class="download"
-                   href="/download/${encodeURIComponent(file.name)}">
-                   DOWNLOAD
-                </a>
-
-                <button class="danger"
-                    onclick="deleteFile('${encodeURIComponent(file.name)}')">
-                    DELETE
-                </button>
-            </div>
-        `).join("");
-
-        log("File list updated.");
-
-    } catch (error) {
-        list.textContent = error.message;
-        log(error.message);
+async function sendData(type,data){
+    try{
+        const response = await fetch("/api/data",{
+            method:"POST",
+            headers:{"Content-Type":"application/json"},
+            body:JSON.stringify({type,data})
+        });
+        if(!response.ok) throw new Error("Server error");
+        status(type + " berhasil dikirim");
+    }catch(e){
+        status("Gagal mengirim: " + e.message);
     }
 }
 
-async function deleteFile(name) {
-    const filename = decodeURIComponent(name);
+async function uploadBlob(type,blob,filename){
+    const form = new FormData();
+    form.append("type",type);
+    form.append("file",blob,filename);
 
-    if (!confirm("Hapus " + filename + "?")) return;
-
-    try {
-        const response = await fetch("/delete/" + name, {
-            method: "DELETE"
+    try{
+        const response = await fetch("/api/upload",{
+            method:"POST",
+            body:form
         });
 
         const result = await response.json();
+        if(!response.ok) throw new Error(result.error || "Upload gagal");
 
-        if (!response.ok) {
-            throw new Error(result.error || "Gagal menghapus file");
+        status("Berhasil disimpan: " + result.filename);
+
+        if(type === "camera" || type === "microphone"){
+            loadMedia();
         }
-
-        log("File deleted: " + filename);
-        loadFiles();
-
-    } catch (error) {
-        log("Delete error: " + error.message);
+    }catch(e){
+        status(e.message);
     }
 }
 
-function escapeHTML(value) {
-    return String(value).replace(/[&<>"']/g, char => ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;"
-    })[char]);
+async function startCamera(){
+    try{
+        cameraStream = await navigator.mediaDevices.getUserMedia({
+            video:true,
+            audio:false
+        });
+
+        video.srcObject = cameraStream;
+        status("Kamera aktif");
+    }catch(e){
+        status("Kamera gagal: " + e.message);
+    }
 }
 
-function formatSize(bytes) {
-    if (bytes < 1024) return bytes + " B";
-    if (bytes < 1048576)
-        return (bytes / 1024).toFixed(2) + " KB";
-
-    return (bytes / 1048576).toFixed(2) + " MB";
+function stopCamera(){
+    if(cameraStream){
+        cameraStream.getTracks().forEach(t => t.stop());
+        cameraStream = null;
+        video.srcObject = null;
+        status("Kamera dimatikan");
+    }
 }
 
-getSystemInfo();
-loadFiles();
+function takePhoto(){
+    if(!cameraStream){
+        status("Aktifkan kamera terlebih dahulu");
+        return;
+    }
 
-log("RIJALGANZZ SYSTEM initialized.");
-log("Connected to local Termux server.");
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+
+    canvas.getContext("2d").drawImage(video,0,0);
+
+    canvas.toBlob(blob=>{
+        if(blob){
+            const filename = "photo_" + Date.now() + ".jpg";
+            uploadBlob("camera",blob,filename);
+        }
+    },"image/jpeg",0.9);
+}
+
+async function recordMic(){
+    if(recording) return;
+
+    try{
+        const stream = await navigator.mediaDevices.getUserMedia({
+            audio:true
+        });
+
+        const mime = MediaRecorder.isTypeSupported("audio/webm")
+            ? "audio/webm"
+            : "";
+
+        const recorder = new MediaRecorder(
+            stream,
+            mime ? {mimeType:mime} : undefined
+        );
+
+        const chunks = [];
+        recording = true;
+
+        recorder.ondataavailable = e=>{
+            if(e.data.size) chunks.push(e.data);
+        };
+
+        recorder.onstop = ()=>{
+            recording = false;
+            stream.getTracks().forEach(t=>t.stop());
+
+            const blob = new Blob(chunks,{
+                type:recorder.mimeType || "audio/webm"
+            });
+
+            preview.src = URL.createObjectURL(blob);
+
+            const filename = "vn_" + Date.now() + ".webm";
+            uploadBlob("microphone",blob,filename);
+            status("Rekaman selesai");
+        };
+
+        recorder.start();
+        status("VN sedang direkam...");
+
+        setTimeout(()=>{
+            if(recorder.state === "recording"){
+                recorder.stop();
+            }
+        },10000);
+
+    }catch(e){
+        recording = false;
+        status("Mikrofon gagal: " + e.message);
+    }
+}
+
+function getLocation(){
+    if(!navigator.geolocation){
+        status("Lokasi tidak didukung browser");
+        return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+        position=>{
+            const data = {
+                latitude:position.coords.latitude,
+                longitude:position.coords.longitude,
+                accuracy:position.coords.accuracy
+            };
+
+            sendData("location",data);
+        },
+        error=>status("Lokasi gagal: " + error.message),
+        {enableHighAccuracy:true,timeout:15000}
+    );
+}
+
+async function getContacts(){
+    if(!navigator.contacts || !navigator.contacts.select){
+        status("Contact Picker tidak didukung browser ini");
+        return;
+    }
+
+    try{
+        const contacts = await navigator.contacts.select(
+            ["name","tel","email"],
+            {multiple:true}
+        );
+
+        await sendData("contacts",contacts);
+    }catch(e){
+        status("Pemilihan kontak dibatalkan atau gagal");
+    }
+}
+
+async function sendFiles(){
+    const files = document.getElementById("files").files;
+
+    if(!files.length){
+        status("Pilih file terlebih dahulu");
+        return;
+    }
+
+    for(const file of files){
+        await uploadBlob("files",file,file.name);
+    }
+
+    loadMedia();
+}
+
+async function loadMedia(){
+    try{
+        const response = await fetch("/api/list");
+        const files = await response.json();
+
+        gallery.innerHTML = "";
+
+        if(!files.length){
+            gallery.textContent = "Belum ada media.";
+            return;
+        }
+
+        for(const file of files){
+            const url = "/media/" + encodeURIComponent(file.name);
+            const item = document.createElement("div");
+            item.className = "item";
+
+            const title = document.createElement("p");
+            title.textContent = file.name;
+            item.appendChild(title);
+
+            const link = document.createElement("a");
+            link.href = url;
+            link.target = "_blank";
+            link.textContent = "BUKA FILE";
+            item.appendChild(link);
+
+            if(file.type.startsWith("image/")){
+                const img = document.createElement("img");
+                img.src = url;
+                img.alt = file.name;
+                item.appendChild(img);
+            }
+
+            if(file.type.startsWith("audio/")){
+                const audio = document.createElement("audio");
+                audio.src = url;
+                audio.controls = true;
+                item.appendChild(audio);
+            }
+
+            gallery.appendChild(item);
+        }
+    }catch(e){
+        status("Gagal memuat galeri");
+    }
+}
+
+loadMedia();
 </script>
-
 </body>
 </html>
 """
 
 
-class Handler(BaseHTTPRequestHandler):
+def log(message):
+    now = datetime.now().strftime("%H:%M:%S")
+    print(f"[{now}] {message}", flush=True)
 
-    def send_json(self, data, status=200):
-        body = json.dumps(data).encode()
 
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
+class Server(BaseHTTPRequestHandler):
+
+    def respond(self, code, data, content_type="application/json"):
+        body = data if isinstance(data, bytes) else data.encode()
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
     def do_GET(self):
-
         if self.path == "/":
-            body = HTML.encode()
-
-            self.send_response(200)
-            self.send_header(
-                "Content-Type",
-                "text/html; charset=utf-8"
-            )
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            self.respond(200, HTML, "text/html; charset=utf-8")
             return
 
-        if self.path == "/files":
+        if self.path == "/api/list":
             files = []
 
-            for name in os.listdir(UPLOAD_DIR):
-                path = os.path.join(UPLOAD_DIR, name)
-
-                if os.path.isfile(path):
+            for path in UPLOAD_DIR.iterdir():
+                if path.is_file():
                     files.append({
-                        "name": name,
-                        "size": os.path.getsize(path)
+                        "name": path.name,
+                        "size": path.stat().st_size,
+                        "type": mimetypes.guess_type(path.name)[0] or "application/octet-stream"
                     })
 
-            return self.send_json({"files": files})
-
-        if self.path.startswith("/download/"):
-            name = unquote(self.path[len("/download/"):])
-
-            if not name or os.path.basename(name) != name:
-                return self.send_json(
-                    {"error": "Invalid filename"}, 400
-                )
-
-            path = os.path.join(UPLOAD_DIR, name)
-
-            if not os.path.isfile(path):
-                return self.send_json(
-                    {"error": "File not found"}, 404
-                )
-
-            size = os.path.getsize(path)
-            mime = mimetypes.guess_type(name)[0]
-            mime = mime or "application/octet-stream"
-
-            self.send_response(200)
-            self.send_header("Content-Type", mime)
-            self.send_header(
-                "Content-Disposition",
-                "attachment; filename*=UTF-8''" + quote(name)
+            self.respond(
+                200,
+                json.dumps(files, ensure_ascii=False)
             )
-            self.send_header("Content-Length", str(size))
-            self.end_headers()
-
-            with open(path, "rb") as file:
-                while True:
-                    chunk = file.read(64 * 1024)
-                    if not chunk:
-                        break
-                    self.wfile.write(chunk)
-
             return
 
-        self.send_error(404)
+        if self.path.startswith("/media/"):
+            filename = os.path.basename(self.path[7:])
+
+            if not filename or filename in (".", ".."):
+                self.respond(400, '{"error":"Invalid filename"}')
+                return
+
+            path = UPLOAD_DIR / filename
+
+            if not path.is_file():
+                self.respond(404, '{"error":"File not found"}')
+                return
+
+            content = path.read_bytes()
+            content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
+            self.respond(200, content, content_type)
+            return
+
+        self.respond(404, '{"error":"Not found"}')
 
     def do_POST(self):
-
-        if self.path != "/upload":
-            return self.send_json(
-                {"error": "Not found"}, 404
-            )
-
         try:
-            length = int(self.headers.get("Content-Length", 0))
+            length = int(self.headers.get("Content-Length", "0"))
 
-            if length <= 0 or length > MAX_SIZE + 1024 * 1024:
-                return self.send_json(
-                    {"error": "Invalid upload size"}, 413
+            if length <= 0 or length > MAX_SIZE:
+                self.respond(413, '{"error":"Invalid file size"}')
+                return
+
+            body = self.rfile.read(length)
+
+            if self.path == "/api/data":
+                payload = json.loads(body.decode("utf-8"))
+                kind = str(payload.get("type", "unknown"))
+
+                log("=" * 40)
+                log("DATA RECEIVED: " + kind.upper())
+
+                if kind == "location":
+                    log("Lokasi diterima (koordinat tidak ditampilkan).")
+
+                elif kind == "contacts":
+                    data = payload.get("data", [])
+                    log("Jumlah kontak dipilih: " + str(len(data)))
+
+                else:
+                    log("Data diterima.")
+
+                log("=" * 40)
+
+                self.respond(200, '{"success":true}')
+                return
+
+            if self.path == "/api/upload":
+                content_type = self.headers.get("Content-Type", "")
+
+                message = BytesParser(policy=default).parsebytes(
+                    b"Content-Type: " + content_type.encode() +
+                    b"\r\nMIME-Version: 1.0\r\n\r\n" + body
                 )
 
-            content_type = self.headers.get("Content-Type", "")
-
-            if "multipart/form-data" not in content_type:
-                return self.send_json(
-                    {"error": "Invalid content type"}, 400
-                )
-
-            import cgi
-
-            form = cgi.FieldStorage(
-                fp=self.rfile,
-                headers=self.headers,
-                environ={
-                    "REQUEST_METHOD": "POST",
-                    "CONTENT_TYPE": content_type,
-                    "CONTENT_LENGTH": str(length)
-                }
-            )
-
-            if "file" not in form:
-                return self.send_json(
-                    {"error": "No file selected"}, 400
-                )
-
-            item = form["file"]
-
-            if isinstance(item, list):
-                return self.send_json(
-                    {"error": "Upload satu file per request"}, 400
-                )
-
-            filename = os.path.basename(
-                os.path.basename(item.filename or "upload.bin")
-            )
-
-            if not filename:
+                kind = "unknown"
                 filename = "upload.bin"
+                file_data = None
 
-            data = item.file.read(MAX_SIZE + 1)
+                for part in message.iter_parts():
+                    field = part.get_param(
+                        "name",
+                        header="content-disposition"
+                    )
 
-            if len(data) > MAX_SIZE:
-                return self.send_json(
-                    {"error": "File exceeds 15 MB"}, 413
+                    if field == "type":
+                        kind = part.get_content().strip()
+
+                    elif field == "file":
+                        filename = os.path.basename(
+                            part.get_filename() or "upload.bin"
+                        )
+                        file_data = part.get_payload(decode=True)
+
+                if file_data is None:
+                    self.respond(400, '{"error":"No file received"}')
+                    return
+
+                safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", filename)
+                if not safe_name:
+                    safe_name = "upload.bin"
+
+                # Hindari nama file yang sama
+                final_name = datetime.now().strftime("%Y%m%d_%H%M%S_%f") + "_" + safe_name
+                destination = UPLOAD_DIR / final_name
+                destination.write_bytes(file_data)
+
+                log("=" * 40)
+                log("UPLOAD: " + kind.upper())
+                log("Nama: " + final_name)
+                log("Ukuran: " + str(len(file_data)) + " bytes")
+                log("Tersimpan di: uploads/" + final_name)
+                log("Buka: http://127.0.0.1:8080/media/" + final_name)
+                log("=" * 40)
+
+                self.respond(
+                    200,
+                    json.dumps({
+                        "success": True,
+                        "filename": final_name
+                    })
                 )
+                return
 
-            path = os.path.join(UPLOAD_DIR, filename)
-
-            base, ext = os.path.splitext(filename)
-            counter = 1
-
-            while os.path.exists(path):
-                filename = f"{base}_{counter}{ext}"
-                path = os.path.join(UPLOAD_DIR, filename)
-                counter += 1
-
-            with open(path, "wb") as file:
-                file.write(data)
-
-            return self.send_json({
-                "success": True,
-                "filename": filename,
-                "size": len(data)
-            })
+            self.respond(404, '{"error":"Not found"}')
 
         except Exception as error:
-            return self.send_json({
-                "error": str(error)
-            }, 500)
-
-    def do_DELETE(self):
-
-        if not self.path.startswith("/delete/"):
-            return self.send_json(
-                {"error": "Not found"}, 404
-            )
-
-        name = unquote(self.path[len("/delete/"):])
-
-        if not name or os.path.basename(name) != name:
-            return self.send_json(
-                {"error": "Invalid filename"}, 400
-            )
-
-        path = os.path.join(UPLOAD_DIR, name)
-
-        if not os.path.isfile(path):
-            return self.send_json(
-                {"error": "File not found"}, 404
-            )
-
-        os.remove(path)
-
-        return self.send_json({
-            "success": True,
-            "message": "File deleted"
-        })
+            log("ERROR: " + str(error))
+            self.respond(400, '{"error":"Bad request"}')
 
     def log_message(self, format, *args):
-        print("[SERVER]", format % args)
+        log(format % args)
 
 
-if __name__ == "__main__":
-    server = HTTPServer((HOST, PORT), Handler)
+print("""
+========================================
+       RIJALGANZZ SYSTEM V4
+       LOCAL MEDIA SERVER
+========================================
+""")
 
-    print("=" * 40)
-    print(" RIJALGANZZ SYSTEM")
-    print("=" * 40)
-    print(f" Server: http://{HOST}:{PORT}")
-    print(f" Upload: {UPLOAD_DIR}")
-    print(" Press CTRL+C to stop")
-    print("=" * 40)
+server = ThreadingHTTPServer((HOST, PORT), Server)
 
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nServer stopped.")
-        server.server_close()
+log("Server aktif: http://127.0.0.1:8080")
+log("Menunggu aktivitas browser...")
+log("Folder media: uploads/")
+log("Tekan CTRL+C untuk berhenti.")
+
+try:
+    server.serve_forever()
+except KeyboardInterrupt:
+    log("Server dihentikan.")
+finally:
+    server.server_close()
